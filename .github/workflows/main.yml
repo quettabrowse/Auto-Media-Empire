@@ -1,0 +1,27 @@
+name: The Daily Insight Worker
+
+# হাগিং ফেসের সিগন্যাল রিসিভ করার নিয়ম
+on:
+  repository_dispatch:
+    types: [trigger_from_hf]
+  workflow_dispatch: # গিটহাব থেকে ম্যানুয়ালি টেস্ট করার জন্য
+
+jobs:
+  auto-post:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: 📡 Signal Received
+        run: echo "✅ Manager Signal Caught! The Daily Insight Worker is starting..."
+        
+      - name: ⚙️ Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 🚀 Ready for Next Phase
+        run: echo "Environment is ready. Waiting for the main Python script..."
+        
