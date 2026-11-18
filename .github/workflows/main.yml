@@ -1,6 +1,7 @@
 name: The Daily Insight Worker
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
@@ -16,10 +17,13 @@ jobs:
           python-version: '3.10'
 
       - name: Install Libraries
-        run: pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+        run: pip install google-api-python-client google-auth google-auth-httplib2 requests
 
       - name: Run Robot
         env:
-          BLOGGER_CREDENTIALS: ${{ secrets.BLOGGER_CREDENTIALS }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python worker.py
         
