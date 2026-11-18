@@ -1,17 +1,54 @@
-import requests
+import os
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 
-# নতুন ফ্রেশ কোড এবং চাবি দিয়ে আসল মাস্টার চাবি (Refresh Token) আনা হচ্ছে
-url = "https://oauth2.googleapis.com/token"
-data = {
-    "code": "4/0AUn6Hd9KhOsluzC6rbNUcZuOwDzKUpnwaUlmQ_KumN1KoLxdC2P4-TLmr2XWICqvNSGJ6A",
-    "client_id": "214264688491-hlnfvq89pfu4a9usnioob56g2io8iu0u.apps.googleusercontent.com",
-    "client_secret": "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",
-    "redirect_uri": "http://localhost",
-    "grant_type": "authorization_code"
-}
+# গিটহাব সিক্রেটস থেকে চাবিগুলো নেওয়া হচ্ছে
+CLIENT_ID = os.environ.get('BLOGGER_CLIENT_ID')
+CLIENT_SECRET = os.environ.get('BLOGGER_CLIENT_SECRET')
+REFRESH_TOKEN = os.environ.get('BLOGGER_REFRESH_TOKEN')
 
-response = requests.post(url, data=data).json()
-print("==========================================")
-print("YOUR MASTER KEY DATA:")
-print(response)
-print("==========================================")
+def main():
+    try:
+        # মাস্টার চাবি দিয়ে লগইন করা
+        creds = Credentials(
+            token=None,
+            refresh_token=REFRESH_TOKEN,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
+        )
+
+        service = build('blogger', 'v3', credentials=creds)
+
+        # ব্লগের আইডি খোঁজা
+        print("ব্লগের সাথে কানেক্ট করা হচ্ছে...")
+        blogs = service.users().blogs().list(userId='self').execute()
+        
+        if not blogs.get('items'):
+            print("Error: কোনো ব্লগ পাওয়া যায়নি।")
+            return
+        
+        blog_id = blogs['items'][0]['id']
+        blog_name = blogs['items'][0]['name']
+        print(f"Success! কানেক্ট হয়েছে: {blog_name} (ID: {blog_id})")
+
+        # টেস্ট পোস্ট লেখা
+        print("টেস্ট পোস্ট পাবলিশ করা হচ্ছে...")
+        post_body = {
+            "title": "সিস্টেম টেস্ট: Master Key Active!",
+            "content": "<h1>সাফল্য!</h1><p>গিটহাব অ্যাকশন এবং OAuth 2.0 ব্যবহার করে এই পোস্টটি অটোমেটিক পাবলিশ হয়েছে। আমাদের বটের এখন ফুল অ্যাডমিন অ্যাক্সেস আছে!</p>",
+            "labels": ["System Test"]
+        }
+
+        # ব্লগে পোস্ট করা
+        request = service.posts().insert(blogId=blog_id, body=post_body, isDraft=False)
+        response = request.execute()
+        
+        print(f"পোস্ট সফলভাবে পাবলিশ হয়েছে! লিংক: {response.get('url')}")
+
+    except Exception as e:
+        print(f"কোথাও একটা ভুল হয়েছে: {e}")
+
+if __name__ == '__main__':
+    main()
+        
