@@ -1,11 +1,11 @@
 import requests
 
-# তোমার নতুন কোড দিয়ে গুগল থেকে আসল মাস্টার চাবি (Refresh Token) আনা হচ্ছে
+# নতুন ফ্রেশ কোড এবং চাবি দিয়ে আসল মাস্টার চাবি (Refresh Token) আনা হচ্ছে
 url = "https://oauth2.googleapis.com/token"
 data = {
-    "code": "4/0AUn6Hd9WJGAjyCYAaSfjoxWRKYsLzPhTgD2b7us6s88liovfaXVZPbImLDS92tc6fZ8o2A",
-    "client_id": "214264688491-f5o82nca7r2emrm0gtbif29ol2lic7pj.apps.googleusercontent.com",
-    "client_secret": "GOCSPX-KVZveM8iCcLbSO_Jnj8vct_Kplx",
+    "code": "4/0AUn6Hd9KhOsluzC6rbNUcZuOwDzKUpnwaUlmQ_KumN1KoLxdC2P4-TLmr2XWICqvNSGJ6A",
+    "client_id": "214264688491-hlnfvq89pfu4a9usnioob56g2io8iu0u.apps.googleusercontent.com",
+    "client_secret": "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",
     "redirect_uri": "http://localhost",
     "grant_type": "authorization_code"
 }
