@@ -4,7 +4,7 @@ from googleapiclient.discovery import build
 
 CLIENT_ID = os.environ.get('BLOGGER_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('BLOGGER_CLIENT_SECRET')
-REFRESH_TOKEN = os.environ.get('BLOGGER_REFRESH_TOKEN')
+REFRESH_TOKEN = os.environ.get('BLOGGER_REFRESH_TOKEN2')
 
 def main():
     try:
@@ -19,7 +19,6 @@ def main():
         service = build('blogger', 'v3', credentials=creds)
 
         print("ব্লগের সাথে কানেক্ট করা হচ্ছে...")
-        # এখানেই ঠিক করা লাইনটি বসানো হয়েছে
         blogs = service.blogs().listByUser(userId='self').execute()
         
         if not blogs.get('items'):
@@ -47,3 +46,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    
