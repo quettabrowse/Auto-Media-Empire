@@ -2,14 +2,12 @@ import os
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-# গিটহাব সিক্রেটস থেকে চাবিগুলো নেওয়া হচ্ছে
 CLIENT_ID = os.environ.get('BLOGGER_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('BLOGGER_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('BLOGGER_REFRESH_TOKEN')
 
 def main():
     try:
-        # মাস্টার চাবি দিয়ে লগইন করা
         creds = Credentials(
             token=None,
             refresh_token=REFRESH_TOKEN,
@@ -20,9 +18,9 @@ def main():
 
         service = build('blogger', 'v3', credentials=creds)
 
-        # ব্লগের আইডি খোঁজা
         print("ব্লগের সাথে কানেক্ট করা হচ্ছে...")
-        blogs = service.users().blogs().list(userId='self').execute()
+        # এখানেই ঠিক করা লাইনটি বসানো হয়েছে
+        blogs = service.blogs().listByUser(userId='self').execute()
         
         if not blogs.get('items'):
             print("Error: কোনো ব্লগ পাওয়া যায়নি।")
@@ -32,7 +30,6 @@ def main():
         blog_name = blogs['items'][0]['name']
         print(f"Success! কানেক্ট হয়েছে: {blog_name} (ID: {blog_id})")
 
-        # টেস্ট পোস্ট লেখা
         print("টেস্ট পোস্ট পাবলিশ করা হচ্ছে...")
         post_body = {
             "title": "সিস্টেম টেস্ট: Master Key Active!",
@@ -40,7 +37,6 @@ def main():
             "labels": ["System Test"]
         }
 
-        # ব্লগে পোস্ট করা
         request = service.posts().insert(blogId=blog_id, body=post_body, isDraft=False)
         response = request.execute()
         
@@ -51,4 +47,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-        
