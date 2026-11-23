@@ -1,11 +1,12 @@
 name: The Daily Insight Worker
 
 on:
-  push:
-    paths-ignore:
-      - 'posted_history.json'
-      - 'images/**'
   workflow_dispatch:
+    inputs:
+      custom_topic:
+        description: "কাস্টম কোনো বিষয় লিখতে চাইলে এখানে দাও (না দিলে অটো নিউজ নেবে)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -13,6 +14,7 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -20,10 +22,11 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install Libraries
-        run: pip install google-api-python-client google-auth google-auth-httplib2 requests feedparser beautifulsoup4
+        run: |
+          pip install requests feedparser beautifulsoup4 google-auth google-auth-oauthlib google-api-python-client
 
       - name: Run Ultimate 2-AI Master Newsroom
         env:
@@ -33,14 +36,19 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
+          TELEGRAM_API_TOKEN: ${{ secrets.TELEGRAM_API_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          CUSTOM_TOPIC: ${{ github.event.inputs.custom_topic }}
         run: python worker.py
 
       - name: Save Memory & Permanent Images
         run: |
           git config --local user.email "action@github.com"
-          git config --local user.name "Daily Insight Bot"
-          mkdir -p images
-          git add posted_history.json images/
-          git diff --staged --quiet || git commit -m "Update memory and images [skip ci]"
+          git config --local user.name "GitHub Action"
+          git add posted_history.json images/ || true
+          if [ -f topic_queue.txt ]; then git add topic_queue.txt; fi
+          git diff --staged --quiet || git commit -m "Auto-update history and images [skip ci]"
           git push
           
