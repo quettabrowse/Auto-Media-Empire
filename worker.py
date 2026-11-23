@@ -1,10 +1,11 @@
+import concurrent.futures
 import json
 import os
 import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import feedparser
 import requests
@@ -83,29 +84,35 @@ FALLBACK_IMAGES = {
 }
 
 
-def send_telegram_alert(step: str, detail: str, ctx: str = "") -> None:
-    if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram alert skipped: missing secrets")
-        return
+def send_telegram_alert(step: str, detail: str, ctx: str = "", skipped: bool = False) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    parts = [
-        f"Alert: {SITE_NAME}",
-        f"Time: {ts}",
-        f"Step: {step}",
-        f"Context: {ctx[:200] if ctx else 'N/A'}",
-        f"Error: {str(detail)[:1100]}",
-    ]
+    tag = "⏭️ SKIPPED" if skipped else "⚠️ ALERT"
+    msg = (
+        f"{tag} | {SITE_NAME}\n"
+        f"Time: {ts}\n"
+        f"Step: {step}\n"
+        f"Context: {ctx[:200] if ctx else 'N/A'}\n"
+        f"Info: {str(detail)[:1100]}"
+    )
+    print(f"[TELEGRAM] {msg}")
+    if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[TELEGRAM_SKIP] Missing TELEGRAM_API_TOKEN or TELEGRAM_CHAT_ID in workflow env.")
+        return
+
     url = f"https://api.telegram.org/bot{TELEGRAM_API_TOKEN}/sendMessage"
-    try:
-        r = requests.post(
-            url,
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": "\n".join(parts)[:3900]},
-            timeout=20,
-        )
-        if not r.ok:
-            print(f"Telegram failed: {r.status_code}")
-    except Exception as e:
-        print(f"Telegram exception: {e}")
+    for _ in range(2):
+        try:
+            r = requests.post(
+                url,
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg[:3900], "disable_web_page_preview": True},
+                timeout=20,
+            )
+            if r.ok:
+                return
+            print(f"[TELEGRAM_RETRY] HTTP {r.status_code}")
+        except Exception as e:
+            print(f"[TELEGRAM_RETRY] {e}")
+        time.sleep(2)
 
 
 def load_history() -> List[Dict[str, Any]]:
@@ -148,13 +155,13 @@ def pop_custom_topic() -> Optional[str]:
                 f.write("\n".join(out) + "\n")
             return picked
     except Exception as e:
-        send_telegram_alert("Topic Queue", str(e), TOPIC_QUEUE_FILE)
+        send_telegram_alert("Custom Topic Queue", f"Queue read failed, falling back to RSS: {e}", TOPIC_QUEUE_FILE, skipped=True)
     return None
 
 
-def call_groq(prompt: str, temp: float = 0.55) -> Optional[str]:
+def call_groq_chain(prompt: str, temp: float = 0.55) -> Tuple[str, Optional[str]]:
     if not GROQ_KEYS:
-        return None
+        return "Groq", None
     endpoint = "https://api.groq.com/openai/v1/chat/completions"
     for idx, key in enumerate(GROQ_KEYS, start=1):
         hdrs = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
@@ -164,51 +171,67 @@ def call_groq(prompt: str, temp: float = 0.55) -> Optional[str]:
                     endpoint,
                     headers=hdrs,
                     json={"model": m, "messages": [{"role": "user", "content": prompt}], "temperature": temp},
-                    timeout=50,
+                    timeout=55,
                 )
                 if r.status_code == 200:
                     txt = (((r.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
                     if txt:
-                        print(f"Groq OK: {m} (Key #{idx})")
-                        return txt
+                        print(f"[AI_OK] Groq ({m}, Key #{idx})")
+                        return "Groq", txt
             except Exception as e:
-                print(f"Groq err ({m}): {e}")
-    return None
+                print(f"[AI_WARN] Groq Key#{idx} ({m}): {e}")
+    return "Groq", None
 
 
-def call_gemini(prompt: str, temp: float = 0.65) -> Optional[str]:
+def call_gemini_chain(prompt: str, temp: float = 0.65) -> Tuple[str, Optional[str]]:
     if not GEMINI_KEYS:
-        return None
+        return "Gemini", None
     hdrs = {"Content-Type": "application/json"}
     body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": temp}}
     for idx, key in enumerate(GEMINI_KEYS, start=1):
         for m in GEMINI_MODELS:
             u = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key}"
             try:
-                r = requests.post(u, headers=hdrs, json=body, timeout=60)
+                r = requests.post(u, headers=hdrs, json=body, timeout=65)
                 if r.status_code == 200:
                     parts = (((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
                     txt = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
                     if txt:
-                        print(f"Gemini OK: {m} (Key #{idx})")
-                        return txt
+                        print(f"[AI_OK] Gemini ({m}, Key #{idx})")
+                        return "Gemini", txt
             except Exception as e:
-                print(f"Gemini err ({m}): {e}")
-    return None
+                print(f"[AI_WARN] Gemini Key#{idx} ({m}): {e}")
+    return "Gemini", None
 
 
-def run_two_ai(prompt: str, step: str, temp: float = 0.6, required: bool = True) -> Optional[str]:
-    res = call_groq(prompt, temp=temp)
-    if res:
-        return res
-    res = call_gemini(prompt, temp=temp)
-    if res:
-        return res
-    err = f"Both Groq and Gemini failed at {step}"
-    send_telegram_alert(step, err)
+def run_parallel_two_ai(
+    prompt: str,
+    step: str,
+    temp: float = 0.6,
+    prefer_merge: bool = False,
+    required: bool = True,
+) -> str:
+    results: Dict[str, str] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        f_groq = pool.submit(call_groq_chain, prompt, temp)
+        f_gem = pool.submit(call_gemini_chain, prompt, temp)
+        for fut in concurrent.futures.as_completed([f_groq, f_gem]):
+            provider, out = fut.result()
+            if out:
+                results[provider] = out
+
+    if len(results) == 2 and prefer_merge:
+        return f"--- Primary ---\n{results['Groq']}\n\n--- Parallel ---\n{results['Gemini']}"
+    if "Groq" in results:
+        return results["Groq"]
+    if "Gemini" in results:
+        return results["Gemini"]
+
+    err = f"All Groq & Gemini keys/models failed at {step}"
+    send_telegram_alert(step, err, skipped=not required)
     if required:
         raise RuntimeError(err)
-    return None
+    return ""
 
 
 def scrape_news(seen_urls: set) -> List[Dict[str, str]]:
@@ -224,14 +247,13 @@ def scrape_news(seen_urls: set) -> List[Dict[str, str]]:
                 if link and title and link not in seen_urls:
                     found.append({"source": src, "title": title, "link": link, "summary": clean_s})
         except Exception as e:
-            print(f"Feed err ({src}): {e}")
+            print(f"[FEED_WARN] {src}: {e}")
     return found
 
 
 def fetch_article_text(url: str, fallback: str) -> str:
     try:
-        hdrs = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=hdrs, timeout=15)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, "html.parser")
             paras = [p.get_text(" ", strip=True) for p in soup.find_all("p") if len(p.get_text(" ", strip=True)) > 40]
@@ -239,13 +261,14 @@ def fetch_article_text(url: str, fallback: str) -> str:
             if len(joined) > 250:
                 return joined
     except Exception as e:
-        print(f"Page fetch fallback ({e})")
+        print(f"[FETCH_WARN] {e}")
     return fallback
 
 
 def save_img(data_bytes: bytes, ext: str = "jpg") -> Optional[str]:
     os.makedirs(IMAGES_DIR, exist_ok=True)
-    fname = f"img_{int(time.time())}.{ext}"
+    rand_tag = int(time.time() * 1000) % 100000
+    fname = f"img_{int(time.time())}_{rand_tag}.{ext}"
     fpath = os.path.join(IMAGES_DIR, fname)
     with open(fpath, "wb") as f:
         f.write(data_bytes)
@@ -254,10 +277,11 @@ def save_img(data_bytes: bytes, ext: str = "jpg") -> Optional[str]:
     return None
 
 
-def make_image(prompt_txt: str, category: str) -> str:
+def make_image(prompt_txt: str, category: str, seed_num: int) -> str:
     smart_prompt = (
-        f"Editorial news visual for '{prompt_txt}' ({category}). "
-        "Clean modern composition, natural lighting, no text, no logo, no watermark"
+        f"Unique editorial visual #{seed_num} for '{prompt_txt}' ({category}). "
+        "Distinct scene, fresh angle, realistic photography, clean modern lighting, "
+        "no text, no logo, no watermark"
     )
     hf_models = ["black-forest-labs/FLUX.1-schnell", "stabilityai/stable-diffusion-xl-base-1.0"]
     hf_errs: List[str] = []
@@ -268,7 +292,10 @@ def make_image(prompt_txt: str, category: str) -> str:
                 try:
                     u = f"https://router.huggingface.co/hf-inference/models/{m}"
                     hdrs = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "image/jpeg"}
-                    payload = {"inputs": smart_prompt, "parameters": {"negative_prompt": "watermark, text, logo"}}
+                    payload = {
+                        "inputs": smart_prompt,
+                        "parameters": {"negative_prompt": "watermark, text, logo, signature", "seed": seed_num},
+                    }
                     r = requests.post(u, headers=hdrs, json=payload, timeout=60)
                     ctype = (r.headers.get("Content-Type") or "").lower()
                     if r.status_code == 200 and ("image/" in ctype or len(r.content) > 5000):
@@ -280,36 +307,52 @@ def make_image(prompt_txt: str, category: str) -> str:
                 except Exception as e:
                     hf_errs.append(f"HF Key#{idx} [{m}]: {e}")
 
-    if hf_errs:
-        send_telegram_alert("HF Image Fallback", "\n".join(hf_errs[-4:]), category)
-
     try:
         enc = urllib.parse.quote(smart_prompt[:420])
-        p_url = f"https://image.pollinations.ai/prompt/{enc}?width=1200&height=675&nologo=true&model=flux"
+        p_url = f"https://image.pollinations.ai/prompt/{enc}?width=1200&height=675&nologo=true&model=flux&seed={seed_num}"
         r = requests.get(p_url, timeout=45)
         if r.status_code == 200 and len(r.content) > 5000:
             saved = save_img(r.content, ext="jpg")
             return saved or p_url
     except Exception as e:
-        send_telegram_alert("Pollinations Image", str(e), category)
+        hf_errs.append(f"Pollinations: {e}")
 
+    send_telegram_alert(
+        "AI Image Generation",
+        "All AI image backups failed; using category fallback image.\n" + "\n".join(hf_errs[-4:]),
+        category,
+        skipped=True,
+    )
     return FALLBACK_IMAGES.get(category, FALLBACK_IMAGES["Technology"])
-def share_fb(title: str, url: str, category: str) -> None:
+    def share_fb(title: str, url: str, category: str) -> None:
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
-        print("FB secrets missing, skip share")
-        return
-    msg = f"{title}\n\n{SITE_NAME} ({category})\n{url}"
-    g_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/feed"
-    try:
-        r = requests.post(
-            g_url,
-            data={"message": msg[:1800], "link": url, "access_token": FB_PAGE_ACCESS_TOKEN},
-            timeout=30,
+        send_telegram_alert(
+            "Facebook Auto-Share",
+            "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing in workflow env. Step skipped.",
+            url,
+            skipped=True,
         )
-        if r.status_code != 200:
-            send_telegram_alert("Facebook Share", f"HTTP {r.status_code}: {r.text[:250]}", url)
-    except Exception as e:
-        send_telegram_alert("Facebook Share Exception", str(e), url)
+        return
+
+    msg = f"{title}\n\n{SITE_NAME} ({category})\nবিস্তারিত পড়ুন: {url}"
+    g_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/feed"
+    last_err = ""
+    for attempt in range(1, 3):
+        try:
+            r = requests.post(
+                g_url,
+                data={"message": msg[:1800], "link": url, "access_token": FB_PAGE_ACCESS_TOKEN},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                print(f"[FB_OK] Shared to {FB_PAGE_ID} (Attempt {attempt})")
+                return
+            last_err = f"Attempt {attempt} HTTP {r.status_code}: {r.text[:250]}"
+        except Exception as e:
+            last_err = f"Attempt {attempt} Exception: {e}"
+        time.sleep(2)
+
+    send_telegram_alert("Facebook Auto-Share", f"All retries failed; skipped. {last_err}", url, skipped=True)
 
 
 def main() -> None:
@@ -319,6 +362,7 @@ def main() -> None:
         seen_urls = {x.get("source_url") for x in history if x.get("source_url")}
         recent_titles = [x.get("bn_title", "") for x in history[-10:] if x.get("bn_title")]
         last_cat = history[-1].get("category", "") if history else ""
+        seed_num = (int(time.time()) + len(history) * 997) % 999999 + 1
 
         creds = Credentials(
             token=None,
@@ -345,7 +389,7 @@ def main() -> None:
                 'Also give clean English image_prompt without text. '
                 'JSON only: {"category":"Technology","image_prompt":"..."}'
             )
-            cat_raw = run_two_ai(cat_prompt, "Custom Category", temp=0.4, required=False)
+            cat_raw = run_parallel_two_ai(cat_prompt, "Custom Category", temp=0.4, required=False)
             category = "Technology"
             img_prompt = custom_topic
             if cat_raw:
@@ -361,10 +405,10 @@ def main() -> None:
             res_prompt = (
                 f"Research '{custom_topic}' across multiple sources and angles for '{SITE_NAME}'. "
                 "Include ONLY verified facts; never invent numbers or fake claims. "
-                "Cover key facts, plain-language explanation of any companies/terms, importance, and 2 Q&As.\n"
+                "Include key facts, plain explanation of companies/terms, importance, and 2 Q&As.\n"
                 f"Extra notes:\n{chr(10).join(notes) if notes else 'None'}"
             )
-            research = run_two_ai(res_prompt, "Custom Research", temp=0.5, required=True)
+            research = run_parallel_two_ai(res_prompt, "Custom Research", temp=0.5, prefer_merge=True, required=True)
             selected = {
                 "source": f"{SITE_NAME} Desk",
                 "title": custom_topic,
@@ -374,8 +418,11 @@ def main() -> None:
             ctx = "RSS Selection"
             candidates = scrape_news(seen_urls)
             if not candidates:
-                send_telegram_alert("RSS Scrape", "No new unique items found", ctx)
-                return
+                send_telegram_alert("RSS Scrape", "No fresh unseen items; using backup recent pool.", ctx, skipped=True)
+                candidates = scrape_news(set())[:10]
+                if not candidates:
+                    send_telegram_alert("RSS Scrape", "All RSS feeds failed; run skipped.", ctx, skipped=True)
+                    return
 
             shortlist = candidates[:25]
             listed = "\n".join([f"{i}. [{a['source']}] {a['title']}" for i, a in enumerate(shortlist)])
@@ -388,9 +435,9 @@ def main() -> None:
                 f"Items:\n{listed}\n"
                 'Return JSON only: {"index":0,"category":"Technology","image_prompt":"..."}'
             )
-            sel_raw = run_two_ai(sel_prompt, "Select Story", temp=0.55, required=True)
+            sel_raw = run_parallel_two_ai(sel_prompt, "Select Story", temp=0.55, required=True)
             choice = json.loads(re.search(r"\{.*\}", sel_raw, re.DOTALL).group())
-            selected = shortlist[int(choice.get("index", 0))]
+            selected = shortlist[int(choice.get("index", 0)) % len(shortlist)]
             category = choice.get("category") or "Technology"
             img_prompt = choice.get("image_prompt") or selected["title"]
             ctx = selected["title"]
@@ -398,22 +445,24 @@ def main() -> None:
             full_txt = fetch_article_text(selected["link"], selected["summary"])
             res_prompt = (
                 "Create a factual research brief from the details below. Never invent claims. "
-                "Include core facts, perspectives, simple explanation of new companies/terms, impact, and 2 Q&As.\n"
+                "Include core facts, perspectives, plain explanation of new companies/terms, impact, and 2 Q&As.\n"
                 f"Title: {selected['title']}\nSource: {selected['source']}\nDetails:\n{full_txt}"
             )
-            research = run_two_ai(res_prompt, "Story Research", temp=0.5, required=True)
+            research = run_parallel_two_ai(res_prompt, "Story Research", temp=0.5, prefer_merge=True, required=True)
 
         write_lines = [
-            f"Write a warm, natural, human Bengali article for '{SITE_NAME}'.",
-            "Explain any new company, organization, or unfamiliar term in simple Bengali right inside the text.",
-            "Keep language clear and accessible; stick strictly to verified facts; never invent statistics.",
-            "Use HTML tags (<strong>, <h2>, <blockquote>, <table>, <p>, <ul>), never **markdown** or foreign CJK chars.",
-            "First line must be <TITLE>Bengali Headline</TITLE>, followed by clean article HTML only.",
+            f"Write a warm, natural, deep-insight human Bengali article for '{SITE_NAME}'.",
+            "TERM FORMAT RULE: For main, hard, or unfamiliar technical terms and company names, write Bengali immediately followed by English in brackets with NO extra brackets or space, like: কৃত্রিম বুদ্ধিমত্তা(Artificial Intelligence) or রিফ্রেশ রেট(Refresh Rate).",
+            "Explain new companies or hard concepts simply right inside the text so any reader understands easily.",
+            "Stick strictly to verified facts; never invent statistics, prices, or fake claims.",
+            "Use clean HTML tags (<p>, <h2>, <blockquote>, <table>, <ul>, <strong>), never **markdown** or CJK chars.",
+            "Include: (1) A summary box titled 'এক নজরে মূল বিষয়', (2) Clear H2 sections, (3) One stylish blockquote, (4) A clean comparison/spec table if relevant, (5) A 'দ্রুত প্রশ্নোত্তর' section with 2 Q&As.",
+            "First line MUST be <TITLE>Bengali Headline</TITLE>, followed by clean article HTML only.",
             f"Topic: {selected['title']}",
             f"Category: {category}",
             f"Research:\n{research}",
         ]
-        raw_art = run_two_ai("\n".join(write_lines), "Write Article", temp=0.65, required=True)
+        raw_art = run_parallel_two_ai("\n".join(write_lines), "Write Article", temp=0.65, required=True)
 
         t_match = re.search(r"<TITLE>(.*?)</TITLE>", raw_art, re.DOTALL)
         bn_title = (t_match.group(1) if t_match else selected["title"]).strip()
@@ -423,28 +472,43 @@ def main() -> None:
         body_html = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff]+", "", body_html)
         bn_title = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff]+", "", bn_title).strip()
 
-        img_url = make_image(img_prompt, category)
+        # Deep Black normal text + Rich Color Combination for headings, quotes, tables
+        body_html = re.sub(r"<p(?![^>]*style=)", '<p style="color:#09090b;line-height:1.85;font-size:16px;margin:0 0 14px 0;"', body_html)
+        body_html = re.sub(r"<li(?![^>]*style=)", '<li style="color:#09090b;line-height:1.8;font-size:15.5px;margin-bottom:6px;"', body_html)
+        body_html = re.sub(r"<h2(?![^>]*style=)", '<h2 style="color:#1e3a8a;font-weight:700;font-size:21px;margin:26px 0 12px;padding-bottom:6px;border-bottom:2px solid #bfdbfe;"', body_html)
+        body_html = re.sub(r"<blockquote(?![^>]*style=)", '<blockquote style="background:#f0fdfa;border-left:4px solid #0d9488;padding:15px 18px;margin:20px 0;border-radius:0 8px 8px 0;color:#0f172a;font-style:italic;font-size:16.5px;"', body_html)
+        body_html = re.sub(r"<table(?![^>]*style=)", '<table style="width:100%;border-collapse:collapse;margin:18px 0;font-size:15px;color:#09090b;"', body_html)
+        body_html = re.sub(r"<th(?![^>]*style=)", '<th style="background:#1e3a8a;color:#ffffff;padding:10px;border:1px solid #cbd5e1;text-align:left;"', body_html)
+        body_html = re.sub(r"<td(?![^>]*style=)", '<td style="padding:10px;border:1px solid #cbd5e1;color:#09090b;background:#ffffff;"', body_html)
+
+        img_url = make_image(img_prompt, category, seed_num)
         badge = (
-            f'<div style="margin-bottom:14px;"><span style="background:#eff6ff;color:#1d4ed8;'
-            f'padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;">{category}</span></div>'
+            '<div style="margin-bottom:14px;"><span style="background:#dbeafe;color:#1e40af;'
+            f'border:1px solid #93c5fd;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;">{category}</span></div>'
         )
         img_box = (
-            f'<div style="text-align:center;margin:0 0 24px 0;"><img src="{img_url}" alt="{bn_title}" '
-            f'style="width:100%;max-width:800px;border-radius:12px;" /></div>'
+            '<div style="text-align:center;margin:0 0 24px 0;">'
+            f'<img src="{img_url}" alt="{bn_title}" '
+            'style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.08);" /></div>'
         )
 
         past = [h for h in history if h.get("blog_url") and h.get("bn_title")][-2:]
         related = ""
         if past:
             lis = "".join(
-                f'<li><a href="{h["blog_url"]}" style="color:#2563eb;font-weight:600;">{h["bn_title"]}</a></li>'
+                f'<li style="margin-bottom:8px;"><a href="{h["blog_url"]}" style="color:#1d4ed8;font-weight:700;text-decoration:none;">{h["bn_title"]}</a></li>'
                 for h in reversed(past)
             )
-            related = f'<div style="margin-top:24px;"><div><strong>আরও পড়ুন</strong></div><ul>{lis}</ul></div>'
+            related = (
+                '<div style="background:#eff6ff;border:1px solid #bfdbfe;padding:16px 18px;margin-top:26px;border-radius:10px;">'
+                '<div style="font-weight:700;font-size:16px;color:#1e3a8a;margin-bottom:10px;">📌 আরও পড়ুন</div>'
+                f'<ul style="padding-left:20px;margin:0;">{lis}</ul></div>'
+            )
 
         credit = (
-            f'<p style="margin-top:20px;font-size:13px;color:#64748b;">'
-            f'তথ্যসূত্র: <a href="{selected["link"]}" target="_blank" rel="noopener noreferrer">{selected["source"]}</a></p>'
+            '<p style="margin-top:22px;font-size:13.5px;color:#334155;border-top:1px solid #e2e8f0;padding-top:12px;">'
+            f'<em>তথ্যসূত্র: <a href="{selected["link"]}" target="_blank" rel="noopener noreferrer" '
+            f'style="color:#1d4ed8;font-weight:600;">{selected["source"]}</a></em></p>'
         )
         schema = {
             "@context": "https://schema.org",
@@ -456,7 +520,7 @@ def main() -> None:
         }
         schema_tag = f'<script type="application/ld+json">{json.dumps(schema, ensure_ascii=False)}</script>'
 
-        final_html = badge + img_box + body_html + related + credit + schema_tag
+        final_html = f'<div style="color:#09090b;">{badge}{img_box}{body_html}{related}{credit}</div>{schema_tag}'
         created = (
             service.posts()
             .insert(
@@ -485,10 +549,9 @@ def main() -> None:
 
     except Exception as e:
         print(f"Pipeline error: {e}")
-        send_telegram_alert("Pipeline Error", str(e), ctx)
+        send_telegram_alert("Pipeline Error", str(e), ctx, skipped=False)
         raise
 
 
 if __name__ == "__main__":
     main()
-        
