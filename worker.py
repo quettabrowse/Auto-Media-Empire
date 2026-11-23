@@ -324,7 +324,7 @@ def make_image(prompt_txt: str, category: str, seed_num: int) -> str:
         skipped=True,
     )
     return FALLBACK_IMAGES.get(category, FALLBACK_IMAGES["Technology"])
-    def share_fb(title: str, url: str, category: str) -> None:
+def share_fb(title: str, url: str, category: str) -> None:
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         send_telegram_alert(
             "Facebook Auto-Share",
