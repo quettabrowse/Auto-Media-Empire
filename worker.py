@@ -32,12 +32,10 @@ REFRESH_TOKEN = (
 
 GEMINI_KEYS = split_keys(os.environ.get("GEMINI_API_KEY", ""))
 GROQ_KEYS = split_keys(os.environ.get("GROQ_API_KEY", ""))
-HF_KEYS = split_keys(os.environ.get("HF_API_KEY", ""))
 
 TELEGRAM_API_TOKEN = os.environ.get("TELEGRAM_API_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-FB_PAGE_ID = os.environ.get("FB_PAGE_ID", "").strip()
 FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN", "").strip()
 
 CUSTOM_TOPIC_ENV = os.environ.get("CUSTOM_TOPIC", "").strip()
@@ -96,7 +94,7 @@ def send_telegram_alert(step: str, detail: str, ctx: str = "", skipped: bool = F
     )
     print(f"[TELEGRAM] {msg}")
     if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TELEGRAM_SKIP] Missing TELEGRAM_API_TOKEN or TELEGRAM_CHAT_ID in workflow env.")
+        print("[TELEGRAM_SKIP] Missing TELEGRAM_API_TOKEN or TELEGRAM_CHAT_ID.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_API_TOKEN}/sendMessage"
@@ -109,7 +107,6 @@ def send_telegram_alert(step: str, detail: str, ctx: str = "", skipped: bool = F
             )
             if r.ok:
                 return
-            print(f"[TELEGRAM_RETRY] HTTP {r.status_code}")
         except Exception as e:
             print(f"[TELEGRAM_RETRY] {e}")
         time.sleep(2)
@@ -155,7 +152,7 @@ def pop_custom_topic() -> Optional[str]:
                 f.write("\n".join(out) + "\n")
             return picked
     except Exception as e:
-        send_telegram_alert("Custom Topic Queue", f"Queue read failed, falling back to RSS: {e}", TOPIC_QUEUE_FILE, skipped=True)
+        send_telegram_alert("Custom Topic Queue", f"Queue read failed, using RSS: {e}", TOPIC_QUEUE_FILE, skipped=True)
     return None
 
 
@@ -277,65 +274,45 @@ def save_img(data_bytes: bytes, ext: str = "jpg") -> Optional[str]:
     return None
 
 
-def make_image(prompt_txt: str, category: str, seed_num: int) -> str:
-    smart_prompt = (
-        f"Unique editorial visual #{seed_num} for '{prompt_txt}' ({category}). "
-        "Distinct scene, fresh angle, realistic photography, clean modern lighting, "
-        "no text, no logo, no watermark"
-    )
-    hf_models = ["black-forest-labs/FLUX.1-schnell", "stabilityai/stable-diffusion-xl-base-1.0"]
-    hf_errs: List[str] = []
-
-    if HF_KEYS:
-        for idx, key in enumerate(HF_KEYS, start=1):
-            for m in hf_models:
-                try:
-                    u = f"https://router.huggingface.co/hf-inference/models/{m}"
-                    hdrs = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "image/jpeg"}
-                    payload = {
-                        "inputs": smart_prompt,
-                        "parameters": {"negative_prompt": "watermark, text, logo, signature", "seed": seed_num},
-                    }
-                    r = requests.post(u, headers=hdrs, json=payload, timeout=60)
-                    ctype = (r.headers.get("Content-Type") or "").lower()
-                    if r.status_code == 200 and ("image/" in ctype or len(r.content) > 5000):
-                        ext = "png" if "png" in ctype else "jpg"
-                        saved = save_img(r.content, ext=ext)
+def make_image(prompt_txt: str, category: str, seed_num: int, article_url: str = "") -> str:
+    if article_url and "thedailyinsightbangla.blogspot.com" not in article_url:
+        try:
+            r = requests.get(article_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, "html.parser")
+                meta_img = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
+                if meta_img and meta_img.get("content"):
+                    img_src = meta_img["content"].strip()
+                    img_r = requests.get(img_src, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+                    if img_r.status_code == 200 and len(img_r.content) > 5000:
+                        saved = save_img(img_r.content, ext="jpg")
                         if saved:
+                            print("[IMG_OK] Real news image saved!")
                             return saved
-                    hf_errs.append(f"HF Key#{idx} [{m}] {r.status_code}")
-                except Exception as e:
-                    hf_errs.append(f"HF Key#{idx} [{m}]: {e}")
+        except Exception as e:
+            print(f"[IMG_WARN] og:image failed: {e}")
 
     try:
-        enc = urllib.parse.quote(smart_prompt[:420])
-        p_url = f"https://image.pollinations.ai/prompt/{enc}?width=1200&height=675&nologo=true&model=flux&seed={seed_num}"
+        short_p = urllib.parse.quote(f"{prompt_txt}, editorial photo, realistic"[:200])
+        p_url = f"https://image.pollinations.ai/prompt/{short_p}?width=1200&height=675&nologo=true&seed={seed_num}"
         r = requests.get(p_url, timeout=45)
         if r.status_code == 200 and len(r.content) > 5000:
             saved = save_img(r.content, ext="jpg")
-            return saved or p_url
+            if saved:
+                print("[IMG_OK] Pollinations backup image saved!")
+                return saved
     except Exception as e:
-        hf_errs.append(f"Pollinations: {e}")
+        print(f"[IMG_WARN] Pollinations failed: {e}")
 
-    send_telegram_alert(
-        "AI Image Generation",
-        "All AI image backups failed; using category fallback image.\n" + "\n".join(hf_errs[-4:]),
-        category,
-        skipped=True,
-    )
+    send_telegram_alert("Image Generation", "Real image & AI backup failed; using category fallback.", category, skipped=True)
     return FALLBACK_IMAGES.get(category, FALLBACK_IMAGES["Technology"])
 def share_fb(title: str, url: str, category: str) -> None:
-    if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
-        send_telegram_alert(
-            "Facebook Auto-Share",
-            "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing in workflow env. Step skipped.",
-            url,
-            skipped=True,
-        )
+    if not FB_PAGE_ACCESS_TOKEN:
+        send_telegram_alert("Facebook Auto-Share", "FB_PAGE_ACCESS_TOKEN missing. Step skipped.", url, skipped=True)
         return
 
     msg = f"{title}\n\n{SITE_NAME} ({category})\nবিস্তারিত পড়ুন: {url}"
-    g_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/feed"
+    g_url = "https://graph.facebook.com/v21.0/me/feed"
     last_err = ""
     for attempt in range(1, 3):
         try:
@@ -345,7 +322,7 @@ def share_fb(title: str, url: str, category: str) -> None:
                 timeout=30,
             )
             if r.status_code == 200:
-                print(f"[FB_OK] Shared to {FB_PAGE_ID} (Attempt {attempt})")
+                print(f"[FB_OK] Shared to Facebook Page (Attempt {attempt})")
                 return
             last_err = f"Attempt {attempt} HTTP {r.status_code}: {r.text[:250]}"
         except Exception as e:
@@ -472,7 +449,6 @@ def main() -> None:
         body_html = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff]+", "", body_html)
         bn_title = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff]+", "", bn_title).strip()
 
-        # Deep Black normal text + Rich Color Combination for headings, quotes, tables
         body_html = re.sub(r"<p(?![^>]*style=)", '<p style="color:#09090b;line-height:1.85;font-size:16px;margin:0 0 14px 0;"', body_html)
         body_html = re.sub(r"<li(?![^>]*style=)", '<li style="color:#09090b;line-height:1.8;font-size:15.5px;margin-bottom:6px;"', body_html)
         body_html = re.sub(r"<h2(?![^>]*style=)", '<h2 style="color:#1e3a8a;font-weight:700;font-size:21px;margin:26px 0 12px;padding-bottom:6px;border-bottom:2px solid #bfdbfe;"', body_html)
@@ -481,7 +457,7 @@ def main() -> None:
         body_html = re.sub(r"<th(?![^>]*style=)", '<th style="background:#1e3a8a;color:#ffffff;padding:10px;border:1px solid #cbd5e1;text-align:left;"', body_html)
         body_html = re.sub(r"<td(?![^>]*style=)", '<td style="padding:10px;border:1px solid #cbd5e1;color:#09090b;background:#ffffff;"', body_html)
 
-        img_url = make_image(img_prompt, category, seed_num)
+        img_url = make_image(img_prompt, category, seed_num, selected["link"])
         badge = (
             '<div style="margin-bottom:14px;"><span style="background:#dbeafe;color:#1e40af;'
             f'border:1px solid #93c5fd;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;">{category}</span></div>'
@@ -555,3 +531,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+             
