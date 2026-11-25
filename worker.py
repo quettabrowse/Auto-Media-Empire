@@ -10,9 +10,6 @@ from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
-# ==========================================
-# CONFIGURATION & ENVIRONMENT VARIABLES
-# ==========================================
 GROQ_API_KEYS = [
     k.strip() for k in [
         os.environ.get("GROQ_API_KEY", ""),
@@ -63,9 +60,6 @@ RSS_FEEDS = [
     ("World", "https://indianexpress.com/section/world/feed/"),
 ]
 
-# ==========================================
-# LOGGING & TELEGRAM HELPERS
-# ==========================================
 def now_utc_str():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -73,7 +67,7 @@ def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("[TELEGRAM] Token or Chat ID missing; skipped.")
         return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
@@ -101,9 +95,6 @@ def notify_step_status(status_icon, status_label, step, context="", info=""):
         msg += f"Info: {info}\n"
     print(msg.strip())
     send_telegram_message(msg.strip())
-# ==========================================
-# STATE MANAGEMENT
-# ==========================================
 def load_history():
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     if os.path.exists(STATE_FILE):
@@ -124,15 +115,13 @@ def save_history(history):
 def url_hash(url):
     return hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:16]
 
-# ==========================================
-# AI CLIENTS (GROQ + GEMINI 4 HYDROGEN FIRST)
-# ==========================================
 def call_groq(system_prompt, user_prompt, temperature=0.65):
+    groq_url = "https://api.groq.com/openai/v1/chat/completions"
     for idx, api_key in enumerate(GROQ_API_KEYS, start=1):
         for model in GROQ_MODELS:
             try:
                 resp = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
+                    groq_url,
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
@@ -160,12 +149,10 @@ def call_groq(system_prompt, user_prompt, temperature=0.65):
     return None
 
 def call_gemini(system_prompt, user_prompt, temperature=0.65):
+    base_gemini = "https://generativelanguage.googleapis.com/v1beta/models/"
     for idx, api_key in enumerate(GEMINI_API_KEYS, start=1):
         for model in GEMINI_MODELS:
-            endpoint = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={api_key}"
-            )
+            endpoint = f"{base_gemini}{model}:generateContent?key={api_key}"
             payload = {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
@@ -216,9 +203,6 @@ def two_ai_pipeline(role_prompt, style_rules, negative_rules, example_text, task
         final_out = call_groq(system_prompt, stage2_user, temperature=0.65)
     return final_out or draft
 
-# ==========================================
-# NEWS FETCHING & IMAGE EXTRACTION
-# ==========================================
 def clean_html_text(html_str):
     soup = BeautifulSoup(html_str or "", "html.parser")
     return " ".join(soup.get_text(" ").split())
@@ -287,9 +271,6 @@ def pick_fresh_news(history):
         except Exception as e:
             print(f"[RSS_WARN] Feed error ({feed_url}): {e}")
     return None
-# ==========================================
-# CONTENT GENERATION (TITLE + ARTICLE + DID YOU KNOW)
-# ==========================================
 def strip_code_fences(text):
     text = re.sub(r"^```(?:html|json|markdown)?\s*", "", text.strip(), flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text.strip())
@@ -368,9 +349,6 @@ def generate_bengali_article(news):
 
     return {"title": title, "body_html": body_html}
 
-# ==========================================
-# IMAGE PROCESSING & FB BANNER THUMBNAIL
-# ==========================================
 def find_font(size, bold=False):
     candidates = [
         "/usr/share/fonts/truetype/noto/NotoSansBengali-Bold.ttf" if bold else "/usr/share/fonts/truetype/noto/NotoSansBengali-Regular.ttf",
@@ -442,14 +420,12 @@ def build_images(news, title_text, post_hash):
     fb_final.save(fb_img_path, "JPEG", quality=90)
     print("[IMG_OK] Real news image processed & saved.")
     return blog_img_path, fb_img_path
-# ==========================================
-# BLOGGER PUBLISHING
-# ==========================================
 def get_blogger_access_token():
     if not (BLOGGER_CLIENT_ID and BLOGGER_CLIENT_SECRET and BLOGGER_REFRESH_TOKEN):
         return None
+    token_url = "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
     r = requests.post(
-        "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)",
+        token_url,
         data={
             "client_id": BLOGGER_CLIENT_ID,
             "client_secret": BLOGGER_CLIENT_SECRET,
@@ -472,9 +448,9 @@ def publish_to_blogger(title, body_html, category, source_url):
         f"<p style='margin-top:18px;font-size:14px;color:#475569;'>"
         f"সূত্র: <a href='{source_url}' target='_blank' rel='nofollow noopener'>{source_url}</a></p>"
     )
-    url = f"[https://www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){BLOGGER_BLOG_ID}/posts/"
+    post_api_url = f"[https://www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){BLOGGER_BLOG_ID}/posts/"
     resp = requests.post(
-        url,
+        post_api_url,
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -492,9 +468,6 @@ def publish_to_blogger(title, body_html, category, source_url):
         return data.get("url", ""), data.get("id", "")
     raise RuntimeError(f"Blogger publish failed ({resp.status_code}): {resp.text}")
 
-# ==========================================
-# FACEBOOK PHOTO POST + FIRST COMMENT + CAPTION
-# ==========================================
 def generate_fb_caption_and_group_text(title, body_html, post_url, category):
     role_prompt = (
         "তুমি 'The Daily Insight' ফেসবুক পেজের সোশ্যাল মিডিয়া এডিটর।"
@@ -537,7 +510,8 @@ def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing"
 
-    photo_endpoint = f"[https://graph.facebook.com/v27.0/](https://graph.facebook.com/v27.0/){FB_PAGE_ID}/photos"
+    graph_base = "[https://graph.facebook.com/v27.0/](https://graph.facebook.com/v27.0/)"
+    photo_endpoint = f"{graph_base}{FB_PAGE_ID}/photos"
     with open(fb_img_path, "rb") as img_file:
         resp = requests.post(
             photo_endpoint,
@@ -557,7 +531,7 @@ def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     print(f"[FB_OK] Photo post published: {target_id}")
 
     comment_text = f"বিস্তারিত পড়ুন এখানে 👇\n{post_url}"
-    comment_endpoint = f"[https://graph.facebook.com/v27.0/](https://graph.facebook.com/v27.0/){target_id}/comments"
+    comment_endpoint = f"{graph_base}{target_id}/comments"
     c_resp = requests.post(
         comment_endpoint,
         data={
@@ -570,9 +544,6 @@ def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
         return target_id, None
     return target_id, f"HTTP {c_resp.status_code}: {c_resp.text}"
 
-# ==========================================
-# MAIN EXECUTION
-# ==========================================
 def main():
     history = load_history()
     news = pick_fresh_news(history)
@@ -644,3 +615,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                    
