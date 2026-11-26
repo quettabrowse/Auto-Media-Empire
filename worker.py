@@ -38,6 +38,8 @@ GROQ_MODELS = [
     "llama-3.3-70b-versatile",
 ]
 
+HF_API_KEY = os.environ.get("HF_API_KEY", "").strip()
+
 BLOGGER_CLIENT_ID = os.environ.get("BLOGGER_CLIENT_ID", "").strip()
 BLOGGER_CLIENT_SECRET = os.environ.get("BLOGGER_CLIENT_SECRET", "").strip()
 BLOGGER_REFRESH_TOKEN = os.environ.get("BLOGGER_REFRESH_TOKEN", "").strip()
@@ -46,18 +48,24 @@ BLOGGER_BLOG_ID = os.environ.get("BLOGGER_BLOG_ID", "").strip()
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID", "").strip()
 FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN", "").strip()
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_BOT_TOKEN = (
+    os.environ.get("TELEGRAM_BOT_TOKEN", "") or os.environ.get("TELEGRAM_API_TOKEN", "")
+).strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-STATE_FILE = "state/posted_history.json"
-IMAGE_DIR = "assets/images"
+CUSTOM_TOPIC = os.environ.get("CUSTOM_TOPIC", "").strip()
+TOPIC_QUEUE_FILE = "topic_queue.txt"
+STATE_FILE = "posted_history.json"
+IMAGE_DIR = "images"
 
 RSS_FEEDS = [
-    ("Technology", "https://www.thehindu.com/sci-tech/technology/feeder/default.rss"),
-    ("Science", "https://www.thehindu.com/sci-tech/science/feeder/default.rss"),
-    ("Gadgets", "https://gadgets360.com/rss/news"),
-    ("India", "https://indianexpress.com/section/india/feed/"),
-    ("World", "https://indianexpress.com/section/world/feed/"),
+    ("Technology", "https" + "://www.thehindu.com/sci-tech/technology/feeder/default.rss"),
+    ("Science", "https" + "://www.thehindu.com/sci-tech/science/feeder/default.rss"),
+    ("Gadgets", "https" + "://gadgets360.com/rss/news"),
+    ("India", "https" + "://indianexpress.com/section/india/feed/"),
+    ("World", "https" + "://indianexpress.com/section/world/feed/"),
+    ("Science", "https" + "://www.sciencedaily.com/rss/all.xml"),
+    ("Science", "https" + "://www.livescience.com/feeds/all"),
 ]
 
 def now_utc_str():
@@ -67,7 +75,7 @@ def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("[TELEGRAM] Token or Chat ID missing; skipped.")
         return False
-    url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+    url = "https" + "://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
@@ -96,7 +104,6 @@ def notify_step_status(status_icon, status_label, step, context="", info=""):
     print(msg.strip())
     send_telegram_message(msg.strip())
 def load_history():
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -108,15 +115,29 @@ def load_history():
     return []
 
 def save_history(history):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(history[-300:], f, ensure_ascii=False, indent=2)
 
-def url_hash(url):
-    return hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:16]
+def url_hash(text_val):
+    return hashlib.sha256(text_val.strip().encode("utf-8")).hexdigest()[:16]
+
+def pop_topic_from_queue():
+    if not os.path.exists(TOPIC_QUEUE_FILE):
+        return ""
+    try:
+        with open(TOPIC_QUEUE_FILE, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f.readlines() if line.strip()]
+        if not lines:
+            return ""
+        topic = lines[0]
+        with open(TOPIC_QUEUE_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines[1:]) + ("\n" if len(lines) > 1 else ""))
+        return topic
+    except Exception:
+        return ""
 
 def call_groq(system_prompt, user_prompt, temperature=0.65):
-    groq_url = "https://api.groq.com/openai/v1/chat/completions"
+    groq_url = "https" + "://api.groq.com/openai/v1/chat/completions"
     for idx, api_key in enumerate(GROQ_API_KEYS, start=1):
         for model in GROQ_MODELS:
             try:
@@ -149,7 +170,7 @@ def call_groq(system_prompt, user_prompt, temperature=0.65):
     return None
 
 def call_gemini(system_prompt, user_prompt, temperature=0.65):
-    base_gemini = "https://generativelanguage.googleapis.com/v1beta/models/"
+    base_gemini = "https" + "://generativelanguage.googleapis.com/v1beta/models/"
     for idx, api_key in enumerate(GEMINI_API_KEYS, start=1):
         for model in GEMINI_MODELS:
             endpoint = f"{base_gemini}{model}:generateContent?key={api_key}"
@@ -250,6 +271,19 @@ def extract_article_details(entry, category):
     }
 
 def pick_fresh_news(history):
+    manual_topic = CUSTOM_TOPIC or pop_topic_from_queue()
+    if manual_topic:
+        print(f"[TOPIC_OK] Using custom topic: {manual_topic}")
+        return {
+            "category": "Special",
+            "title": manual_topic,
+            "link": "",
+            "summary": manual_topic,
+            "text": f"Write a detailed, engaging Bengali explainer article about: {manual_topic}",
+            "image_url": "",
+            "hash": url_hash(f"custom_{manual_topic}_{now_utc_str()}"),
+        }
+
     seen_hashes = {item.get("hash") for item in history if isinstance(item, dict)}
     feeds_shuffled = RSS_FEEDS[:]
     random.shuffle(feeds_shuffled)
@@ -285,7 +319,7 @@ def generate_bengali_article(news):
         "লেখা হবে সাবলীল, মানবিক, প্রাঞ্জল ও গল্পের মতো সহজ বাংলায়। "
         "জটিল বিষয় দৈনন্দিন জীবনের সাধারণ উদাহরণ দিয়ে বোঝাবে। "
         "নতুন বা কঠিন ইংরেজি/প্রযুক্তি শব্দ এলে 'বাংলা(English)' ফরম্যাট ব্যবহার করবে, যেমন: কৃত্রিম বুদ্ধিমত্তা(Artificial Intelligence)। "
-        "বড় অনুচ্ছেদ না লিখে পরিষ্কার সাব-হেডিং ও বুলেট পয়েন্ট রাখবে।"
+        "বড় অনুচ্ছেদ না লিখে পরিষ্কার সাব-হেডিং (<h2> বা <h3>) ও বুলেট পয়েন্ট রাখবে।"
     )
     negative_rules = (
         "আড়ষ্ট, যান্ত্রিক বা আক্ষরিক শব্দ-অনুবাদ (যেমন 'এক-উপর-অন্যান্যের' বা জড়ানো ইংরেজি-বাংলা মিশ্রণ) একদম ব্যবহার করবে না। "
@@ -309,7 +343,6 @@ def generate_bengali_article(news):
     source_blob = (
         f"Category: {news['category']}\n"
         f"Original Headline: {news['title']}\n"
-        f"Source URL: {news['link']}\n"
         f"Details:\n{news['text']}"
     )
 
@@ -362,6 +395,25 @@ def find_font(size, bold=False):
                 pass
     return ImageFont.load_default()
 
+def generate_hf_backup_image(prompt_text):
+    if not HF_API_KEY:
+        return None
+    hf_url = "https" + "://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+    try:
+        r = requests.post(
+            hf_url,
+            headers={"Authorization": f"Bearer {HF_API_KEY}"},
+            json={"inputs": f"Editorial news photography, realistic, high quality, 16:9, no text: {prompt_text[:180]}"},
+            timeout=60,
+        )
+        if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
+            print("[IMG_OK] Hugging Face backup image generated.")
+            return Image.open(BytesIO(r.content)).convert("RGB")
+        print(f"[IMG_WARN] HF image HTTP {r.status_code}")
+    except Exception as e:
+        print(f"[IMG_WARN] HF image error: {e}")
+    return None
+
 def build_images(news, title_text, post_hash):
     os.makedirs(IMAGE_DIR, exist_ok=True)
     blog_img_path = os.path.join(IMAGE_DIR, f"{post_hash}_blog.jpg")
@@ -379,11 +431,14 @@ def build_images(news, title_text, post_hash):
             print(f"[IMG_WARN] Original image download failed: {e}")
 
     if img is None:
+        img = generate_hf_backup_image(news.get("title") or title_text)
+
+    if img is None:
         img = Image.new("RGB", (1200, 675), (15, 23, 42))
         draw = ImageDraw.Draw(img)
         draw.rectangle([0, 0, 1200, 675], fill=(15, 23, 42))
-        f_brand = find_font(44, bold=True)
-        draw.text((60, 60), "The Daily Insight", fill=(125, 211, 252), font=f_brand)
+        f_brand = find_font(48, bold=True)
+        draw.text((60, 290), "The Daily Insight", fill=(125, 211, 252), font=f_brand)
 
     target_w, target_h = 1200, 675
     src_ratio = img.width / img.height
@@ -418,12 +473,12 @@ def build_images(news, title_text, post_hash):
     draw_fb.text((tx, ty), banner_text, fill=(255, 255, 255), font=banner_font)
 
     fb_final.save(fb_img_path, "JPEG", quality=90)
-    print("[IMG_OK] Real news image processed & saved.")
+    print("[IMG_OK] Images processed & saved.")
     return blog_img_path, fb_img_path
 def get_blogger_access_token():
     if not (BLOGGER_CLIENT_ID and BLOGGER_CLIENT_SECRET and BLOGGER_REFRESH_TOKEN):
         return None
-    token_url = "https" + "://oauth2.googleapis.com/token"
+    token_url = "https" + "://[oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
     r = requests.post(
         token_url,
         data={
@@ -438,17 +493,49 @@ def get_blogger_access_token():
         return r.json().get("access_token")
     raise RuntimeError(f"Blogger OAuth failed ({r.status_code}): {r.text}")
 
-def publish_to_blogger(title, body_html, category, source_url):
+def get_source_name(source_url):
+    u = (source_url or "").lower()
+    if not u:
+        return "The Daily Insight গবেষণা ডেস্ক"
+    if "thehindu.com" in u:
+        return "The Hindu"
+    if "indianexpress.com" in u:
+        return "The Indian Express"
+    if "gadgets360.com" in u:
+        return "Gadgets 360"
+    if "sciencedaily.com" in u:
+        return "ScienceDaily"
+    if "livescience.com" in u:
+        return "Live Science"
+    return "আন্তর্জাতিক সংবাদ সংস্থা"
+
+def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
     token = get_blogger_access_token()
     if not token or not BLOGGER_BLOG_ID:
         raise RuntimeError("Blogger credentials or BLOGGER_BLOG_ID missing.")
 
-    full_content = (
-        f"{body_html}\n"
-        f"<p style='margin-top:18px;font-size:14px;color:#475569;'>"
-        f"সূত্র: <a href='{source_url}' target='_blank' rel='nofollow noopener'>{source_url}</a></p>"
+    source_name = get_source_name(source_url)
+    img_url = "https" + f"://[raw.githubusercontent.com/quettabrowse/Auto-Media-Empire/main/images/](https://raw.githubusercontent.com/quettabrowse/Auto-Media-Empire/main/images/){post_hash}_blog.jpg"
+
+    img_block = (
+        f"<div style='margin-bottom:20px;text-align:center;'>"
+        f"<img src='{img_url}' alt='{title}' style='width:100%;max-width:1200px;height:auto;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.12);'/>"
+        f"</div>"
     )
-    post_api_url = "https" + f"://www.googleapis.com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts/"
+
+    styled_body = (
+        f"<style>"
+        f".tdi-article p, .tdi-article li {{ color:#09090b !important; font-size:17px !important; line-height:1.85 !important; }}"
+        f".tdi-article h2, .tdi-article h3 {{ color:#1e3a8a !important; font-weight:700 !important; margin-top:22px !important; }}"
+        f"</style>"
+        f"<div class='tdi-article' style='color:#09090b;font-size:17px;line-height:1.85;'>"
+        f"{img_block}"
+        f"{body_html}"
+        f"<p style='margin-top:20px;font-size:15px;color:#334155;font-weight:600;'>সূত্র: {source_name}</p>"
+        f"</div>"
+    )
+
+    post_api_url = "https" + f"://[www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){BLOGGER_BLOG_ID}/posts/"
     resp = requests.post(
         post_api_url,
         headers={
@@ -458,7 +545,7 @@ def publish_to_blogger(title, body_html, category, source_url):
         json={
             "kind": "blogger#post",
             "title": title,
-            "content": full_content,
+            "content": styled_body,
             "labels": ["The Daily Insight", category],
         },
         timeout=30,
@@ -509,8 +596,8 @@ def generate_fb_caption_and_group_text(title, body_html, post_url, category):
 def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing"
-        
-    graph_base = "https" + "://graph.facebook.com/v27.0/"
+
+    graph_base = "https" + "://[graph.facebook.com/v27.0/](https://graph.facebook.com/v27.0/)"
     photo_endpoint = f"{graph_base}{FB_PAGE_ID}/photos"
     with open(fb_img_path, "rb") as img_file:
         resp = requests.post(
@@ -561,7 +648,7 @@ def main():
 
     blog_img_path, fb_img_path = build_images(news, title, news["hash"])
 
-    post_url, post_id = publish_to_blogger(title, body_html, news["category"], news["link"])
+    post_url, post_id = publish_to_blogger(title, body_html, news["category"], news["link"], news["hash"])
     print(f"Published:\n{post_url}")
 
     fb_caption, group_caption = generate_fb_caption_and_group_text(
@@ -615,4 +702,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-                          
+        
