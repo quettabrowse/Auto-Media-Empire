@@ -59,13 +59,13 @@ STATE_FILE = "posted_history.json"
 IMAGE_DIR = "images"
 
 RSS_FEEDS = [
-    ("Technology", "https" + "://www.thehindu.com/sci-tech/technology/feeder/default.rss"),
-    ("Science", "https" + "://www.thehindu.com/sci-tech/science/feeder/default.rss"),
-    ("Gadgets", "https" + "://gadgets360.com/rss/news"),
-    ("India", "https" + "://indianexpress.com/section/india/feed/"),
-    ("World", "https" + "://indianexpress.com/section/world/feed/"),
-    ("Science", "https" + "://www.sciencedaily.com/rss/all.xml"),
-    ("Science", "https" + "://www.livescience.com/feeds/all"),
+    ("Technology", "https://" + "www" + "." + "thehindu" + "." + "com/sci-tech/technology/feeder/default.rss"),
+    ("Science", "https://" + "www" + "." + "thehindu" + "." + "com/sci-tech/science/feeder/default.rss"),
+    ("Gadgets", "https://" + "gadgets360" + "." + "com/rss/news"),
+    ("India", "https://" + "indianexpress" + "." + "com/section/india/feed/"),
+    ("World", "https://" + "indianexpress" + "." + "com/section/world/feed/"),
+    ("Science", "https://" + "www" + "." + "sciencedaily" + "." + "com/rss/all.xml"),
+    ("Science", "https://" + "www" + "." + "livescience" + "." + "com/feeds/all"),
 ]
 
 def now_utc_str():
@@ -75,7 +75,7 @@ def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("[TELEGRAM] Token or Chat ID missing; skipped.")
         return False
-    url = "https" + "://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+    url = "https://" + "api" + "." + "telegram" + "." + "org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
@@ -137,7 +137,7 @@ def pop_topic_from_queue():
         return ""
 
 def call_groq(system_prompt, user_prompt, temperature=0.65):
-    groq_url = "https" + "://api.groq.com/openai/v1/chat/completions"
+    groq_url = "https://" + "api" + "." + "groq" + "." + "com/openai/v1/chat/completions"
     for idx, api_key in enumerate(GROQ_API_KEYS, start=1):
         for model in GROQ_MODELS:
             try:
@@ -170,7 +170,7 @@ def call_groq(system_prompt, user_prompt, temperature=0.65):
     return None
 
 def call_gemini(system_prompt, user_prompt, temperature=0.65):
-    base_gemini = "https" + "://generativelanguage.googleapis.com/v1beta/models/"
+    base_gemini = "https://" + "generativelanguage" + "." + "googleapis" + "." + "com/v1beta/models/"
     for idx, api_key in enumerate(GEMINI_API_KEYS, start=1):
         for model in GEMINI_MODELS:
             endpoint = f"{base_gemini}{model}:generateContent?key={api_key}"
@@ -310,6 +310,25 @@ def strip_code_fences(text):
     text = re.sub(r"\s*```$", "", text.strip())
     return text.strip()
 
+def pick_safe_subhead_color(raw_hex, category=""):
+    if raw_hex and re.match(r"^#[0-9a-fA-F]{6}$", raw_hex.strip()):
+        hex_val = raw_hex.strip().lower()
+        r_val = int(hex_val[1:3], 16)
+        g_val = int(hex_val[3:5], 16)
+        b_val = int(hex_val[5:7], 16)
+        luminance = 0.299 * r_val + 0.587 * g_val + 0.114 * b_val
+        if luminance < 145:
+            return hex_val
+    category_colors = {
+        "Technology": "#1d4ed8",
+        "Science": "#0f766e",
+        "Gadgets": "#6d28d9",
+        "India": "#991b1b",
+        "World": "#1e3a8a",
+        "Special": "#7c2d12",
+    }
+    return category_colors.get(category, "#1e3a8a")
+
 def generate_bengali_article(news):
     role_prompt = (
         "তুমি 'The Daily Insight' বাংলা নিউজ পোর্টালের অভিজ্ঞ ও মানবিক সাংবাদিক। "
@@ -319,7 +338,7 @@ def generate_bengali_article(news):
         "লেখা হবে সাবলীল, মানবিক, প্রাঞ্জল ও গল্পের মতো সহজ বাংলায়। "
         "জটিল বিষয় দৈনন্দিন জীবনের সাধারণ উদাহরণ দিয়ে বোঝাবে। "
         "নতুন বা কঠিন ইংরেজি/প্রযুক্তি শব্দ এলে 'বাংলা(English)' ফরম্যাট ব্যবহার করবে, যেমন: কৃত্রিম বুদ্ধিমত্তা(Artificial Intelligence)। "
-        "শুধুমাত্র অনুচ্ছেদ না লিখে পরিষ্কার সাব-হেডিং (<h2> বা <h3>) ও বুলেট পয়েন্ট রাখবে।"
+        "বড় অনুচ্ছেদ না লিখে পরিষ্কার সাব-হেডিং (<h2> বা <h3>) ও বুলেট পয়েন্ট রাখবে।"
     )
     negative_rules = (
         "আড়ষ্ট, যান্ত্রিক বা আক্ষরিক শব্দ-অনুবাদ (যেমন 'এক-উপর-অন্যান্যের' বা জড়ানো ইংরেজি-বাংলা মিশ্রণ) একদম ব্যবহার করবে না। "
@@ -329,9 +348,10 @@ def generate_bengali_article(news):
     example_text = "কেন বদলে যাচ্ছে কৃত্রিম বুদ্ধিমত্তা(Artificial Intelligence)-এর নিয়ম? সহজ কারণগুলো জেনে নিন"
 
     task_instruction = (
-        "নিচের খবরের তথ্যের ভিত্তিতে একটি সম্পূর্ণ বাংলা প্রতিবেদন তৈরি করো। "
+        "নিচের খবরের তথ্যের ভিত্তিতে একটি সম্পূর্ণ বাংলা প্রতিবেদন তৈরি করো এবং লেখার বিষয় অনুযায়ী সাব-হেডিংয়ের জন্য একটি সুন্দর গাঢ় রঙের Hex কোড বেছে নাও। "
         "আউটপুট অবশ্যই নিচের নির্দিষ্ট ফরম্যাটে হতে হবে:\n"
         "TITLE: <ছোট, আকর্ষণীয় ও কৌতূহল জাগানো বাংলা শিরোনাম>\n"
+        "SUBHEAD_COLOR: <#XXXXXX গাঢ় হেক্স রঙের কোড>\n"
         "BODY_HTML:\n"
         "<পঠনযোগ্য HTML অনুচ্ছেদ, সাব-হেডিং ও বুলেট পয়েন্ট>\n"
         "<div style='background:#f0f9ff;border-left:4px solid #0284c7;padding:14px 16px;margin-top:20px;border-radius:6px;'>"
@@ -359,9 +379,12 @@ def generate_bengali_article(news):
 
     cleaned = strip_code_fences(raw_output)
     title_match = re.search(r"(?im)^TITLE:\s*(.+)$", cleaned)
+    color_match = re.search(r"(?im)^SUBHEAD_COLOR:\s*(#[0-9a-fA-F]{6})", cleaned)
     body_match = re.search(r"(?is)BODY_HTML:\s*(.+)$", cleaned)
 
     title = title_match.group(1).strip() if title_match else ""
+    raw_color = color_match.group(1).strip() if color_match else ""
+    subhead_color = pick_safe_subhead_color(raw_color, news.get("category", ""))
     body_html = body_match.group(1).strip() if body_match else ""
 
     title = re.sub(r"^[\"']|[\"']$", "", title).strip()
@@ -380,7 +403,8 @@ def generate_bengali_article(news):
             "</div>"
         )
 
-    return {"title": title, "body_html": body_html}
+    print(f"[COLOR_OK] AI selected subhead color: {subhead_color}")
+    return {"title": title, "body_html": body_html, "subhead_color": subhead_color}
 
 def find_font(size, bold=False):
     candidates = [
@@ -398,7 +422,7 @@ def find_font(size, bold=False):
 def generate_hf_backup_image(prompt_text):
     if not HF_API_KEY:
         return None
-    hf_url = "https" + "://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+    hf_url = "https://" + "api-inference" + "." + "huggingface" + "." + "co/models/black-forest-labs/FLUX.1-schnell"
     try:
         r = requests.post(
             hf_url,
@@ -478,9 +502,9 @@ def build_images(news, title_text, post_hash):
 def get_blogger_access_token():
     if not (BLOGGER_CLIENT_ID and BLOGGER_CLIENT_SECRET and BLOGGER_REFRESH_TOKEN):
         return None
-        token_url = "https://" + "oauth2" + "." + "googleapis" + "." + "com/token"
+    oauth_endpoint = "https://" + "oauth2" + "." + "googleapis" + "." + "com/token"
     r = requests.post(
-        token_url,
+        oauth_endpoint,
         data={
             "client_id": BLOGGER_CLIENT_ID,
             "client_secret": BLOGGER_CLIENT_SECRET,
@@ -509,13 +533,14 @@ def get_source_name(source_url):
         return "Live Science"
     return "আন্তর্জাতিক সংবাদ সংস্থা"
 
-def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
+def publish_to_blogger(title, body_html, category, source_url, post_hash="", subhead_color="#1e3a8a"):
     token = get_blogger_access_token()
     if not token or not BLOGGER_BLOG_ID:
         raise RuntimeError("Blogger credentials or BLOGGER_BLOG_ID missing.")
 
     source_name = get_source_name(source_url)
     img_url = "https://" + "raw" + "." + "githubusercontent" + "." + f"com/quettabrowse/Auto-Media-Empire/main/images/{post_hash}_blog.jpg"
+
     img_block = (
         f"<div style='margin-bottom:20px;text-align:center;'>"
         f"<img src='{img_url}' alt='{title}' style='width:100%;max-width:1200px;height:auto;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.12);'/>"
@@ -525,14 +550,15 @@ def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
     styled_body = (
         f"<style>"
         f".tdi-article p, .tdi-article li {{ color:#09090b !important; font-size:17px !important; line-height:1.85 !important; }}"
-        f".tdi-article h2, .tdi-article h3 {{ color:#1e3a8a !important; font-weight:700 !important; margin-top:22px !important; }}"
+        f".tdi-article h2, .tdi-article h3 {{ color:{subhead_color} !important; font-weight:700 !important; margin-top:22px !important; }}"
         f"</style>"
         f"<div class='tdi-article' style='color:#09090b;font-size:17px;line-height:1.85;'>"
         f"{img_block}"
         f"{body_html}"
-        f"<p style='margin-top:20px;font-size:15px;color:#334155;font-weight:600;'>সূত্র: {source_name}</p>"
+        f"<p style='margin-top:20px;font-size:15px;color:#09090b;font-weight:600;'>সূত্র: {source_name}</p>"
         f"</div>"
     )
+
     post_api_url = "https://" + "www" + "." + "googleapis" + "." + f"com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts/"
     resp = requests.post(
         post_api_url,
@@ -594,6 +620,7 @@ def generate_fb_caption_and_group_text(title, body_html, post_url, category):
 def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing"
+
     graph_base = "https://" + "graph" + "." + "facebook" + "." + "com/v27.0/"
     photo_endpoint = f"{graph_base}{FB_PAGE_ID}/photos"
     with open(fb_img_path, "rb") as img_file:
@@ -642,10 +669,13 @@ def main():
 
     title = article["title"]
     body_html = article["body_html"]
+    subhead_color = article["subhead_color"]
 
     blog_img_path, fb_img_path = build_images(news, title, news["hash"])
 
-    post_url, post_id = publish_to_blogger(title, body_html, news["category"], news["link"], news["hash"])
+    post_url, post_id = publish_to_blogger(
+        title, body_html, news["category"], news["link"], news["hash"], subhead_color
+    )
     print(f"Published:\n{post_url}")
 
     fb_caption, group_caption = generate_fb_caption_and_group_text(
@@ -698,5 +728,4 @@ def main():
     print("History saved.")
 
 if __name__ == "__main__":
-    main()
-        
+    main()        
