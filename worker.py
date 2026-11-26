@@ -478,7 +478,7 @@ def build_images(news, title_text, post_hash):
 def get_blogger_access_token():
     if not (BLOGGER_CLIENT_ID and BLOGGER_CLIENT_SECRET and BLOGGER_REFRESH_TOKEN):
         return None
-    token_url = "https" + "://[oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
+        token_url = "https://" + "oauth2" + "." + "googleapis" + "." + "com/token"
     r = requests.post(
         token_url,
         data={
@@ -515,8 +515,7 @@ def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
         raise RuntimeError("Blogger credentials or BLOGGER_BLOG_ID missing.")
 
     source_name = get_source_name(source_url)
-    img_url = "https" + f"://[raw.githubusercontent.com/quettabrowse/Auto-Media-Empire/main/images/](https://raw.githubusercontent.com/quettabrowse/Auto-Media-Empire/main/images/){post_hash}_blog.jpg"
-
+        img_url = "https://" + "raw" + "." + "githubusercontent" + "." + f"com/quettabrowse/Auto-Media-Empire/main/images/{post_hash}_blog.jpg"
     img_block = (
         f"<div style='margin-bottom:20px;text-align:center;'>"
         f"<img src='{img_url}' alt='{title}' style='width:100%;max-width:1200px;height:auto;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.12);'/>"
@@ -535,7 +534,7 @@ def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
         f"</div>"
     )
 
-    post_api_url = "https" + f"://[www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){BLOGGER_BLOG_ID}/posts/"
+        post_api_url = "https://" + "www" + "." + "googleapis" + "." + f"com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts/"
     resp = requests.post(
         post_api_url,
         headers={
@@ -596,8 +595,7 @@ def generate_fb_caption_and_group_text(title, body_html, post_url, category):
 def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing"
-
-    graph_base = "https" + "://[graph.facebook.com/v27.0/](https://graph.facebook.com/v27.0/)"
+        graph_base = "https://" + "graph" + "." + "facebook" + "." + "com/v27.0/"
     photo_endpoint = f"{graph_base}{FB_PAGE_ID}/photos"
     with open(fb_img_path, "rb") as img_file:
         resp = requests.post(
