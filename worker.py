@@ -423,7 +423,7 @@ def build_images(news, title_text, post_hash):
 def get_blogger_access_token():
     if not (BLOGGER_CLIENT_ID and BLOGGER_CLIENT_SECRET and BLOGGER_REFRESH_TOKEN):
         return None
-    token_url = "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
+    token_url = "https" + "://oauth2.googleapis.com/token"
     r = requests.post(
         token_url,
         data={
@@ -448,7 +448,7 @@ def publish_to_blogger(title, body_html, category, source_url):
         f"<p style='margin-top:18px;font-size:14px;color:#475569;'>"
         f"সূত্র: <a href='{source_url}' target='_blank' rel='nofollow noopener'>{source_url}</a></p>"
     )
-    post_api_url = f"[https://www.googleapis.com/blogger/v3/blogs/](https://www.googleapis.com/blogger/v3/blogs/){BLOGGER_BLOG_ID}/posts/"
+    post_api_url = "https" + f"://www.googleapis.com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts/"
     resp = requests.post(
         post_api_url,
         headers={
@@ -509,8 +509,8 @@ def generate_fb_caption_and_group_text(title, body_html, post_url, category):
 def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing"
-
-    graph_base = "[https://graph.facebook.com/v27.0/](https://graph.facebook.com/v27.0/)"
+        
+    graph_base = "https" + "://graph.facebook.com/v27.0/"
     photo_endpoint = f"{graph_base}{FB_PAGE_ID}/photos"
     with open(fb_img_path, "rb") as img_file:
         resp = requests.post(
