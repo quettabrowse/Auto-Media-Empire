@@ -515,7 +515,7 @@ def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
         raise RuntimeError("Blogger credentials or BLOGGER_BLOG_ID missing.")
 
     source_name = get_source_name(source_url)
-        img_url = "https://" + "raw" + "." + "githubusercontent" + "." + f"com/quettabrowse/Auto-Media-Empire/main/images/{post_hash}_blog.jpg"
+    img_url = "https://" + "raw" + "." + "githubusercontent" + "." + f"com/quettabrowse/Auto-Media-Empire/main/images/{post_hash}_blog.jpg"
     img_block = (
         f"<div style='margin-bottom:20px;text-align:center;'>"
         f"<img src='{img_url}' alt='{title}' style='width:100%;max-width:1200px;height:auto;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.12);'/>"
