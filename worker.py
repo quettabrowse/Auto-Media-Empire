@@ -533,8 +533,7 @@ def publish_to_blogger(title, body_html, category, source_url, post_hash=""):
         f"<p style='margin-top:20px;font-size:15px;color:#334155;font-weight:600;'>সূত্র: {source_name}</p>"
         f"</div>"
     )
-
-        post_api_url = "https://" + "www" + "." + "googleapis" + "." + f"com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts/"
+    post_api_url = "https://" + "www" + "." + "googleapis" + "." + f"com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts/"
     resp = requests.post(
         post_api_url,
         headers={
@@ -595,7 +594,7 @@ def generate_fb_caption_and_group_text(title, body_html, post_url, category):
 def publish_fb_photo_and_comment(fb_img_path, caption, post_url):
     if not FB_PAGE_ID or not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN missing"
-        graph_base = "https://" + "graph" + "." + "facebook" + "." + "com/v27.0/"
+    graph_base = "https://" + "graph" + "." + "facebook" + "." + "com/v27.0/"
     photo_endpoint = f"{graph_base}{FB_PAGE_ID}/photos"
     with open(fb_img_path, "rb") as img_file:
         resp = requests.post(
